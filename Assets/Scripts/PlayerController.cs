@@ -13,11 +13,14 @@ public class PlayerController : MonoBehaviour
     public float jumpForce = 10f;
     public float doubleJumpForce = 8f;
     public LayerMask groundLayer;
+    public LayerMask waterLayer;  // слой для воды
     public Transform groundCheck;
 
     private Rigidbody2D rb;
     private bool isGroundedBool = false;
     private bool canDoubleJump = false;
+
+    private bool isInWater = false;
 
     public Controls controlmode;
 
@@ -55,6 +58,7 @@ public class PlayerController : MonoBehaviour
     private void Update()
     {
         isGroundedBool = IsGrounded();
+        isInWater = IsInWater();
 
         if (controlmode == Controls.pc)
         {
@@ -63,6 +67,103 @@ public class PlayerController : MonoBehaviour
             if (Input.GetKey(moveRightKey)) moveX = 1f;
         }
 
+        if (isInWater)
+        {
+            HandleWaterMovement();
+        }
+        else
+        {
+            HandleGroundMovement();
+        }
+
+        if (!isPaused)
+        {
+            Vector3 mousePosition = Camera.main.ScreenToWorldPoint(Input.mousePosition);
+            Vector3 lookDirection = mousePosition - transform.position;
+
+            if (controlmode == Controls.pc && Input.GetKeyDown(shootKey) && Time.time >= nextFireTime)
+            {
+                Shoot();
+                nextFireTime = Time.time + 1f / fireRate;
+            }
+        }
+
+        // Эффекты шагов (работают только на земле)
+        if (!isInWater)
+        {
+            if (moveX != 0 && isGroundedBool)
+            {
+                footEmissions.rateOverTime = 35f;
+            }
+            else
+            {
+                footEmissions.rateOverTime = 0f;
+            }
+        }
+        else
+        {
+            footEmissions.rateOverTime = 0f;
+        }
+
+        // Эффект приземления
+        if (!wasonGround && isGroundedBool)
+        {
+            ImpactEffect.gameObject.SetActive(true);
+            ImpactEffect.Stop();
+            ImpactEffect.transform.position = new Vector2(footsteps.transform.position.x, footsteps.transform.position.y - 0.2f);
+            ImpactEffect.Play();
+        }
+
+        wasonGround = isGroundedBool;
+    }
+
+    private void FixedUpdate()
+    {
+        if (isInWater)
+        {
+            // Плавное движение в воде с инерцией
+            float waterMoveSpeed = moveSpeed * 0.5f;
+            float targetVelocityX = moveX * waterMoveSpeed;
+            float velocityX = Mathf.Lerp(rb.linearVelocity.x, targetVelocityX, 0.1f);
+
+            // Плавучесть и управление вертикальной скоростью в воде
+            float buoyancyForce = 1.5f;
+            float verticalVelocity = rb.linearVelocity.y;
+
+            if (Input.GetKey(jumpKey)) // всплытие
+            {
+                verticalVelocity = jumpForce * 0.5f;
+            }
+            else
+            {
+                verticalVelocity += buoyancyForce * Time.fixedDeltaTime;
+                verticalVelocity = Mathf.Clamp(verticalVelocity, -2f, 3f);
+            }
+
+            rb.linearVelocity = new Vector2(velocityX, verticalVelocity);
+
+            // Отзеркаливание персонажа по направлению движения
+            if (moveX != 0 && moveX != lastDirection)
+            {
+                FlipSprite(moveX);
+                lastDirection = moveX;
+            }
+        }
+        else
+        {
+            // Нормальное движение на земле
+            rb.linearVelocity = new Vector2(moveX * moveSpeed, rb.linearVelocity.y);
+
+            if (moveX != 0 && moveX != lastDirection)
+            {
+                FlipSprite(moveX);
+                lastDirection = moveX;
+            }
+        }
+    }
+
+    private void HandleGroundMovement()
+    {
         if (isGroundedBool)
         {
             canDoubleJump = true;
@@ -79,49 +180,12 @@ public class PlayerController : MonoBehaviour
                 canDoubleJump = false;
             }
         }
-
-        if (!isPaused)
-        {
-            Vector3 mousePosition = Camera.main.ScreenToWorldPoint(Input.mousePosition);
-            Vector3 lookDirection = mousePosition - transform.position;
-
-            if (controlmode == Controls.pc && Input.GetKeyDown(shootKey) && Time.time >= nextFireTime)
-            {
-                Shoot();
-                nextFireTime = Time.time + 1f / fireRate;
-            }
-        }
-
-        // Обработка шагов
-        if (moveX != 0 && isGroundedBool)
-        {
-            footEmissions.rateOverTime = 35f;
-        }
-        else
-        {
-            footEmissions.rateOverTime = 0f;
-        }
-
-        if (!wasonGround && isGroundedBool)
-        {
-            ImpactEffect.gameObject.SetActive(true);
-            ImpactEffect.Stop();
-            ImpactEffect.transform.position = new Vector2(footsteps.transform.position.x, footsteps.transform.position.y - 0.2f);
-            ImpactEffect.Play();
-        }
-
-        wasonGround = isGroundedBool;
     }
 
-    private void FixedUpdate()
+    private void HandleWaterMovement()
     {
-        rb.linearVelocity = new Vector2(moveX * moveSpeed, rb.linearVelocity.y);
-
-        if (moveX != 0 && moveX != lastDirection)
-        {
-            FlipSprite(moveX);
-            lastDirection = moveX;
-        }
+        // Вода обрабатывается в FixedUpdate для плавности
+        // Здесь можно добавить дополнительные эффекты или обработку, если нужно
     }
 
     private void Jump(float jumpForce)
@@ -133,9 +197,16 @@ public class PlayerController : MonoBehaviour
     private bool IsGrounded()
     {
         float rayLength = 0.25f;
-        Vector2 rayOrigin = new Vector2(groundCheck.transform.position.x, groundCheck.transform.position.y - 0.1f);
+        Vector2 rayOrigin = new Vector2(groundCheck.position.x, groundCheck.position.y - 0.1f);
         RaycastHit2D hit = Physics2D.Raycast(rayOrigin, Vector2.down, rayLength, groundLayer);
         return hit.collider != null;
+    }
+
+    private bool IsInWater()
+    {
+        // Проверяем пересечение с водой в небольшой области вокруг игрока
+        Collider2D waterCollider = Physics2D.OverlapCircle(transform.position, 0.2f, waterLayer);
+        return waterCollider != null;
     }
 
     private void OnCollisionEnter2D(Collision2D collision)
@@ -154,13 +225,19 @@ public class PlayerController : MonoBehaviour
 
     public void MobileJump()
     {
-        if (isGroundedBool)
+        if (isInWater)
         {
-            Jump(jumpForce);
+            // В воде прыжок — всплытие
+            rb.linearVelocity = new Vector2(rb.linearVelocity.x, 0);
+            rb.AddForce(Vector2.up * jumpForce * 0.5f, ForceMode2D.Impulse);
         }
         else
         {
-            if (canDoubleJump)
+            if (isGroundedBool)
+            {
+                Jump(jumpForce);
+            }
+            else if (canDoubleJump)
             {
                 Jump(doubleJumpForce);
                 canDoubleJump = false;

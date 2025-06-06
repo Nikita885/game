@@ -13,8 +13,8 @@ public class Events : MonoBehaviour
     {
         SceneManager.LoadScene(1);
     }
-    public void Quit()
+    public void Level2()
     {
-        Application.Quit();
+       SceneManager.LoadScene(2);
     }
 }
